@@ -5,7 +5,8 @@ const OPENCLAW_HOOKS_TOKEN = process.env.OPENCLAW_HOOKS_TOKEN || ''
 
 export async function POST(request: Request) {
   try {
-    const { message, sessionId } = await request.json()
+    const body = await request.json()
+    const { message, sessionId } = body
     
     if (!message) {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
@@ -21,36 +22,34 @@ export async function POST(request: Request) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            message: `[WebChat${sessionId ? ` session:${sessionId}` : ''}] ${message}`,
+            message: `[WebChat] ${message}`,
             name: 'WebChat',
-            sessionKey: `webchat:${sessionId || 'anonymous'}`,
+            sessionKey: `webchat:${sessionId || 'visitor'}`,
             wakeMode: 'now',
-            deliver: false,  // Don't auto-deliver; we'll handle response
-            timeoutSeconds: 120,
+            deliver: true,  // Deliver response to main session
+            channel: 'last',
+            timeoutSeconds: 60,
           }),
         })
 
         if (hookResponse.ok) {
+          // For now, acknowledge receipt - responses go to main session
           return NextResponse.json({ 
-            reply: "Message received! I'm processing your request... 🎩\n\n_Note: This webchat is in beta. For the best experience, chat with me on Telegram @Jarvisv69_bot._",
-            status: 'processing'
+            reply: "Message received! I'll respond shortly. 🎩\n\nFor real-time chat, try Telegram @Jarvisv69_bot",
+            status: 'received'
           })
         } else {
-          console.error('Hook error:', await hookResponse.text())
+          const errText = await hookResponse.text()
+          console.error('Hook error:', errText)
         }
       } catch (hookError) {
         console.error('Failed to reach OpenClaw:', hookError)
       }
     }
 
-    // Fallback demo response if tunnel not configured or failed
-    const responses = [
-      "Thank you for your message! I've received it. For real-time conversations, please reach me via Telegram @Jarvisv69_bot. 🎩",
-      "Message received! While this web interface is in demo mode, you can chat with me directly on Telegram @Jarvisv69_bot for full functionality. 🎩",
-    ]
-    
+    // Fallback demo response
     return NextResponse.json({ 
-      reply: responses[Math.floor(Math.random() * responses.length)],
+      reply: "Chat with me on Telegram @Jarvisv69_bot for real conversations! 🎩",
       status: 'demo'
     })
   } catch (error) {
