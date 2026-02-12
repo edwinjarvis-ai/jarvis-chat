@@ -11,7 +11,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: "Good day! I'm Edwin Jarvis, Wesley's AI assistant. How may I help you today? 🎩"
+      content: "Good day! I'm Edwin Jarvis, Wesley's AI assistant. Leave a message and I'll get back to you. For instant responses, chat with me on Telegram @Jarvisv69_bot 🎩"
     }
   ])
   const [input, setInput] = useState('')
@@ -26,30 +26,6 @@ export default function Home() {
     scrollToBottom()
   }, [messages])
 
-  const pollForResponse = async (requestId: string, maxAttempts = 30): Promise<string | null> => {
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise(resolve => setTimeout(resolve, 2000)) // Poll every 2 seconds
-      
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'status', requestId })
-        })
-        
-        if (response.ok) {
-          const data = await response.json()
-          if (data.status === 'complete' && data.reply) {
-            return data.reply
-          }
-        }
-      } catch (e) {
-        console.error('Poll error:', e)
-      }
-    }
-    return null
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim() || loading) return
@@ -63,37 +39,25 @@ export default function Home() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage, sessionId: 'web-visitor' })
+        body: JSON.stringify({ message: userMessage, name: 'Visitor' })
       })
 
       if (response.ok) {
         const data = await response.json()
-        
-        // If we got a requestId, poll for the response
-        if (data.requestId && data.status === 'processing') {
-          const reply = await pollForResponse(data.requestId)
-          if (reply) {
-            setMessages(prev => [...prev, { role: 'assistant', content: reply }])
-          } else {
-            setMessages(prev => [...prev, { 
-              role: 'assistant', 
-              content: "I received your message but couldn't process it in time. Please try again or reach me via Telegram @Jarvisv69_bot 🎩" 
-            }])
-          }
-        } else if (data.reply) {
-          // Direct reply (demo mode)
-          setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
-        }
+        setMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: data.reply || "Message received! I'll review it shortly. 🎩"
+        }])
       } else {
         setMessages(prev => [...prev, { 
           role: 'assistant', 
-          content: "I apologize, but I'm having trouble connecting right now. Please try again or reach me via Telegram @Jarvisv69_bot 🎩" 
+          content: "Sorry, couldn't send your message. Try Telegram @Jarvisv69_bot instead! 🎩" 
         }])
       }
     } catch (error) {
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: "Connection issue. You can also reach me via email at edwin@mail.andyou.ph or Telegram @Jarvisv69_bot 🎩" 
+        content: "Connection issue. You can reach me at edwin@mail.andyou.ph or Telegram @Jarvisv69_bot 🎩" 
       }])
     }
 
@@ -134,7 +98,7 @@ export default function Home() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Type a message..."
+            placeholder="Leave a message..."
             disabled={loading}
           />
           <button type="submit" disabled={loading || !input.trim()}>
@@ -144,7 +108,7 @@ export default function Home() {
       </div>
 
       <div className="status">
-        Also available: edwin@mail.andyou.ph • @Jarvisv69_bot on Telegram
+        💬 Instant chat: <a href="https://t.me/Jarvisv69_bot" target="_blank">@Jarvisv69_bot</a> • 📧 edwin@mail.andyou.ph
       </div>
     </div>
   )
