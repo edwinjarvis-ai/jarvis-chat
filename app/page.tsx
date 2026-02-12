@@ -7,66 +7,162 @@ interface Message {
   content: string
 }
 
-const WS_URL = 'wss://offered-tracker-western-affairs.trycloudflare.com'
+// Gateway URL and token from environment
+const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || ''
+const GATEWAY_TOKEN = process.env.NEXT_PUBLIC_GATEWAY_TOKEN || ''
+
+let requestId = 0
+const nextId = () => `req-${++requestId}`
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [connected, setConnected] = useState(false)
+  const [status, setStatus] = useState('Connecting...')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const pendingRef = useRef<Map<string, (payload: any) => void>>(new Map())
+  const streamRef = useRef<string>('')
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const request = useCallback((method: string, params: any): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        reject(new Error('Not connected'))
+        return
+      }
+      const id = nextId()
+      pendingRef.current.set(id, resolve)
+      wsRef.current.send(JSON.stringify({ type: 'req', id, method, params }))
+      setTimeout(() => {
+        if (pendingRef.current.has(id)) {
+          pendingRef.current.delete(id)
+          reject(new Error('Request timeout'))
+        }
+      }, 120000)
+    })
+  }, [])
+
   const connect = useCallback(() => {
+    if (!GATEWAY_URL) {
+      setStatus('Gateway URL not configured')
+      return
+    }
     if (wsRef.current?.readyState === WebSocket.OPEN) return
     
-    const ws = new WebSocket(WS_URL)
+    setStatus('Connecting...')
+    const ws = new WebSocket(GATEWAY_URL)
     
     ws.onopen = () => {
-      setConnected(true)
-      console.log('Connected to Jarvis')
+      console.log('WebSocket open, waiting for challenge...')
+      setStatus('Authenticating...')
     }
     
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
         
-        if (data.type === 'connected') {
-          setMessages([{ role: 'assistant', content: data.message }])
-        } else if (data.type === 'message') {
-          setLoading(false)
-          setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
-        } else if (data.type === 'typing') {
-          setLoading(true)
-        } else if (data.type === 'error') {
-          setLoading(false)
-          setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
-        } else if (data.type === 'timeout') {
-          // Keep typing but show interim message
-          setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+        // Handle connect challenge
+        if (data.type === 'event' && data.event === 'connect.challenge') {
+          // Send connect request with auth
+          const connectReq = {
+            type: 'req',
+            id: nextId(),
+            method: 'connect',
+            params: {
+              minProtocol: 3,
+              maxProtocol: 3,
+              client: {
+                id: 'jarvis-webchat',
+                version: '1.0.0',
+                platform: 'web',
+                mode: 'webchat',
+                instanceId: `wc-${Date.now()}`
+              },
+              auth: GATEWAY_TOKEN ? { token: GATEWAY_TOKEN } : undefined,
+              nonce: data.payload?.nonce
+            }
+          }
+          ws.send(JSON.stringify(connectReq))
+          return
+        }
+        
+        // Handle response
+        if (data.type === 'res') {
+          const resolver = pendingRef.current.get(data.id)
+          if (resolver) {
+            pendingRef.current.delete(data.id)
+            if (data.ok) {
+              resolver(data.payload)
+            }
+          }
+          // Check if this is connect response (has hello or assistant info)
+          if (data.ok && (data.payload?.hello || data.payload?.assistant)) {
+            setConnected(true)
+            setStatus('Connected')
+            const name = data.payload?.assistant?.name || 'Jarvis'
+            setMessages([{ role: 'assistant', content: `Good evening! I'm ${name}, at your service. 🎩` }])
+          }
+          return
+        }
+        
+        // Handle chat events (streaming responses)
+        if (data.type === 'event' && data.event === 'chat') {
+          const payload = data.payload
+          if (!payload) return
+          
+          if (payload.state === 'delta') {
+            // Extract text from message
+            const msg = payload.message
+            let text = ''
+            if (typeof msg?.content === 'string') {
+              text = msg.content
+            } else if (Array.isArray(msg?.content)) {
+              text = msg.content
+                .filter((c: any) => c.type === 'text')
+                .map((c: any) => c.text)
+                .join('')
+            }
+            if (text) {
+              streamRef.current = text
+              // Update streaming message
+              setMessages(prev => {
+                const last = prev[prev.length - 1]
+                if (last?.role === 'assistant' && loading) {
+                  return [...prev.slice(0, -1), { role: 'assistant', content: text }]
+                }
+                return prev
+              })
+            }
+          } else if (payload.state === 'final' || payload.state === 'error' || payload.state === 'aborted') {
+            setLoading(false)
+            streamRef.current = ''
+          }
         }
       } catch (e) {
         console.error('Parse error:', e)
       }
     }
     
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setConnected(false)
-      console.log('Disconnected from Jarvis')
-      // Reconnect after 3 seconds
+      const reason = event.reason || 'Connection closed'
+      setStatus(`Disconnected: ${reason}`)
+      console.log('Disconnected from Gateway:', event.code, reason)
       setTimeout(connect, 3000)
     }
     
     ws.onerror = (error) => {
       console.error('WebSocket error:', error)
+      setStatus('Connection error')
     }
     
     wsRef.current = ws
-  }, [])
+  }, [loading])
 
   useEffect(() => {
     connect()
@@ -82,8 +178,30 @@ export default function Home() {
     const userMessage = input.trim()
     setInput('')
     setMessages(prev => [...prev, { role: 'user', content: userMessage }])
+    setLoading(true)
+    streamRef.current = ''
     
-    wsRef.current?.send(JSON.stringify({ message: userMessage }))
+    // Add placeholder for streaming response
+    setMessages(prev => [...prev, { role: 'assistant', content: '...' }])
+
+    try {
+      await request('chat.send', {
+        sessionKey: 'main',
+        message: userMessage,
+        deliver: false,
+        idempotencyKey: `wc-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      })
+    } catch (err) {
+      console.error('Send error:', err)
+      setMessages(prev => {
+        const last = prev[prev.length - 1]
+        if (last?.role === 'assistant' && last.content === '...') {
+          return [...prev.slice(0, -1), { role: 'assistant', content: 'Error: Could not send message' }]
+        }
+        return prev
+      })
+      setLoading(false)
+    }
   }
 
   return (
@@ -92,7 +210,7 @@ export default function Home() {
         <div className="emoji">🎩</div>
         <h1>Edwin Jarvis</h1>
         <p style={{ color: connected ? '#4ade80' : '#f87171' }}>
-          {connected ? '● Connected' : '○ Connecting...'}
+          {connected ? '● Connected' : `○ ${status}`}
         </p>
       </div>
 
@@ -104,9 +222,8 @@ export default function Home() {
               {msg.content}
             </div>
           ))}
-          {loading && (
-            <div className="message assistant">
-              <div className="name">Jarvis</div>
+          {loading && messages[messages.length - 1]?.content === '...' && (
+            <div className="message assistant" style={{ opacity: 0 }}>
               <div className="typing"><span></span><span></span><span></span></div>
             </div>
           )}
@@ -118,7 +235,7 @@ export default function Home() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={connected ? "Type a message..." : "Connecting..."}
+            placeholder={connected ? "Type a message..." : status}
             disabled={loading || !connected}
           />
           <button type="submit" disabled={loading || !input.trim() || !connected}>Send</button>
@@ -126,7 +243,7 @@ export default function Home() {
       </div>
 
       <div className="status">
-        Real-time chat powered by WebSocket 🔌
+        Direct Gateway connection via WebSocket 🔌
       </div>
     </div>
   )
