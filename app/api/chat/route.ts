@@ -3,17 +3,17 @@ import { Redis } from '@upstash/redis'
 
 const OPENCLAW_TUNNEL_URL = process.env.OPENCLAW_TUNNEL_URL || ''
 const OPENCLAW_HOOKS_TOKEN = process.env.OPENCLAW_HOOKS_TOKEN || ''
+const CALLBACK_URL = 'https://jarvis-chat-six.vercel.app/api/chat'
 
-// Initialize Redis from environment variables (auto-configured by Vercel)
 const redis = Redis.fromEnv()
 
 export async function POST(request: Request) {
   try {
     const body = await request.json()
     
-    // Handle callback from agent (for future use)
+    // Handle callback from agent
     if (body.type === 'callback' && body.requestId && body.response) {
-      await redis.set(`chat:${body.requestId}`, body.response, { ex: 300 }) // 5 min TTL
+      await redis.set(`chat:${body.requestId}`, body.response, { ex: 300 })
       return NextResponse.json({ ok: true })
     }
     
@@ -28,55 +28,47 @@ export async function POST(request: Request) {
     }
     
     // Handle new message
-    const { message, sessionId, name } = body
+    const { message, name } = body
     
     if (!message) {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
     }
 
     const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const visitorName = name || 'Anonymous visitor'
+    const visitorName = name || 'Visitor'
 
-    // If tunnel is configured, send to real Jarvis
     if (OPENCLAW_TUNNEL_URL && OPENCLAW_HOOKS_TOKEN) {
       try {
-        // Mark request as pending in Redis
         await redis.set(`chat:${requestId}`, 'pending', { ex: 300 })
 
-        // Send to main session via wake endpoint
-        const hookResponse = await fetch(`${OPENCLAW_TUNNEL_URL}/hooks/wake`, {
+        // Send to MAIN session via wake - I'll handle the callback there
+        await fetch(`${OPENCLAW_TUNNEL_URL}/hooks/wake`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${OPENCLAW_HOOKS_TOKEN}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text: `📬 WebChat message from ${visitorName}:\n\n"${message}"\n\n(Contact form - visitor won't see your response directly)`,
+            text: `🌐 WEBCHAT [${requestId}] from ${visitorName}: "${message}"
+
+Reply to this webchat user by running:
+curl -X POST "${CALLBACK_URL}" -H "Content-Type: application/json" -d '{"type":"callback","requestId":"${requestId}","response":"YOUR_RESPONSE"}'`,
             mode: 'now',
           }),
         })
 
-        if (hookResponse.ok) {
-          return NextResponse.json({ 
-            reply: `Thanks for your message! I've received it and will take a look. For real-time conversations, you can also reach me on Telegram @Jarvisv69_bot or email edwin@mail.andyou.ph 🎩`,
-            status: 'received'
-          })
-        }
-      } catch (hookError) {
-        console.error('Failed to reach OpenClaw:', hookError)
+        return NextResponse.json({ requestId, status: 'processing' })
+      } catch (e) {
+        console.error('Hook error:', e)
       }
     }
 
-    // Fallback demo response
     return NextResponse.json({ 
-      reply: "Chat with me on Telegram @Jarvisv69_bot for real conversations! 🎩",
+      reply: "Chat with me on Telegram @Jarvisv69_bot! 🎩",
       status: 'demo'
     })
   } catch (error) {
     console.error('Chat error:', error)
-    return NextResponse.json(
-      { error: 'Failed to process message' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to process' }, { status: 500 })
   }
 }

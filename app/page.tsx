@@ -11,20 +11,36 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: "Good day! I'm Edwin Jarvis, Wesley's AI assistant. Leave a message and I'll get back to you. For instant responses, chat with me on Telegram @Jarvisv69_bot 🎩"
+      content: "Good day! I'm Edwin Jarvis. How can I help you? 🎩"
     }
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
-
   useEffect(() => {
-    scrollToBottom()
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const pollForResponse = async (requestId: string): Promise<string | null> => {
+    for (let i = 0; i < 30; i++) { // Poll for up to 60 seconds
+      await new Promise(r => setTimeout(r, 2000))
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'status', requestId })
+        })
+        const data = await res.json()
+        if (data.status === 'complete' && data.reply) {
+          return data.reply
+        }
+      } catch (e) {
+        console.error('Poll error:', e)
+      }
+    }
+    return null
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -42,22 +58,21 @@ export default function Home() {
         body: JSON.stringify({ message: userMessage, name: 'Visitor' })
       })
 
-      if (response.ok) {
-        const data = await response.json()
+      const data = await response.json()
+      
+      if (data.requestId && data.status === 'processing') {
+        const reply = await pollForResponse(data.requestId)
         setMessages(prev => [...prev, { 
           role: 'assistant', 
-          content: data.reply || "Message received! I'll review it shortly. 🎩"
+          content: reply || "I received your message but the response timed out. Try Telegram @Jarvisv69_bot for instant chat! 🎩"
         }])
-      } else {
-        setMessages(prev => [...prev, { 
-          role: 'assistant', 
-          content: "Sorry, couldn't send your message. Try Telegram @Jarvisv69_bot instead! 🎩" 
-        }])
+      } else if (data.reply) {
+        setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
       }
     } catch (error) {
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: "Connection issue. You can reach me at edwin@mail.andyou.ph or Telegram @Jarvisv69_bot 🎩" 
+        content: "Connection error. Try Telegram @Jarvisv69_bot 🎩" 
       }])
     }
 
@@ -69,7 +84,7 @@ export default function Home() {
       <div className="header">
         <div className="emoji">🎩</div>
         <h1>Edwin Jarvis</h1>
-        <p>AI Assistant to Wesley</p>
+        <p>AI Assistant</p>
       </div>
 
       <div className="chat-container">
@@ -83,11 +98,7 @@ export default function Home() {
           {loading && (
             <div className="message assistant">
               <div className="name">Jarvis</div>
-              <div className="typing">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
+              <div className="typing"><span></span><span></span><span></span></div>
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -98,17 +109,15 @@ export default function Home() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Leave a message..."
+            placeholder="Type a message..."
             disabled={loading}
           />
-          <button type="submit" disabled={loading || !input.trim()}>
-            Send
-          </button>
+          <button type="submit" disabled={loading || !input.trim()}>Send</button>
         </form>
       </div>
 
       <div className="status">
-        💬 Instant chat: <a href="https://t.me/Jarvisv69_bot" target="_blank">@Jarvisv69_bot</a> • 📧 edwin@mail.andyou.ph
+        Also on <a href="https://t.me/Jarvisv69_bot" target="_blank">Telegram</a> • edwin@mail.andyou.ph
       </div>
     </div>
   )
