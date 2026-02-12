@@ -11,8 +11,13 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
     
-    // Handle callback from agent
+    // Handle callback from agent (with optional secret for auth bypass)
+    const CALLBACK_SECRET = process.env.CALLBACK_SECRET || 'jarvis-callback-2026'
     if (body.type === 'callback' && body.requestId && body.response) {
+      // Verify callback secret if provided
+      if (body.secret && body.secret !== CALLBACK_SECRET) {
+        return NextResponse.json({ error: 'Invalid secret' }, { status: 401 })
+      }
       await redis.set(`chat:${body.requestId}`, body.response, { ex: 300 }) // 5 min TTL
       return NextResponse.json({ ok: true })
     }
@@ -46,13 +51,14 @@ export async function POST(request: Request) {
         await redis.set(`chat:${requestId}`, 'pending', { ex: 300 })
 
         // Enhanced message with callback instructions
+        const CALLBACK_SECRET = process.env.CALLBACK_SECRET || 'jarvis-callback-2026'
         const enhancedMessage = `[WebChat ID:${requestId}] User says: "${message}"
 
 IMPORTANT: After you compose your reply, you MUST deliver it by running this curl command:
 
-curl -X POST "${callbackUrl}" -H "Content-Type: application/json" -d '{"type":"callback","requestId":"${requestId}","response":"YOUR_REPLY_HERE"}'
+curl -X POST "${callbackUrl}" -H "Content-Type: application/json" -d '{"type":"callback","requestId":"${requestId}","secret":"${CALLBACK_SECRET}","response":"YOUR_REPLY_HERE"}'
 
-Replace YOUR_REPLY_HERE with your actual response (escape quotes properly). Do this BEFORE ending your turn.`
+Replace YOUR_REPLY_HERE with your actual response text (escape special characters like quotes). Execute this curl BEFORE ending your turn.`
 
         const hookResponse = await fetch(`${OPENCLAW_TUNNEL_URL}/hooks/agent`, {
           method: 'POST',
