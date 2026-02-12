@@ -1,82 +1,86 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
 }
 
+const WS_URL = 'wss://serving-keyboards-finally-importantly.trycloudflare.com'
+
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      content: "Good day! I'm Edwin Jarvis. How can I help you? 🎩"
-    }
-  ])
+  const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [connected, setConnected] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const pollForResponse = async (requestId: string): Promise<string | null> => {
-    for (let i = 0; i < 30; i++) { // Poll for up to 60 seconds
-      await new Promise(r => setTimeout(r, 2000))
+  const connect = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) return
+    
+    const ws = new WebSocket(WS_URL)
+    
+    ws.onopen = () => {
+      setConnected(true)
+      console.log('Connected to Jarvis')
+    }
+    
+    ws.onmessage = (event) => {
       try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'status', requestId })
-        })
-        const data = await res.json()
-        if (data.status === 'complete' && data.reply) {
-          return data.reply
+        const data = JSON.parse(event.data)
+        
+        if (data.type === 'connected') {
+          setMessages([{ role: 'assistant', content: data.message }])
+        } else if (data.type === 'message') {
+          setLoading(false)
+          setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+        } else if (data.type === 'typing') {
+          setLoading(true)
+        } else if (data.type === 'error') {
+          setLoading(false)
+          setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
         }
       } catch (e) {
-        console.error('Poll error:', e)
+        console.error('Parse error:', e)
       }
     }
-    return null
-  }
+    
+    ws.onclose = () => {
+      setConnected(false)
+      console.log('Disconnected from Jarvis')
+      // Reconnect after 3 seconds
+      setTimeout(connect, 3000)
+    }
+    
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error)
+    }
+    
+    wsRef.current = ws
+  }, [])
+
+  useEffect(() => {
+    connect()
+    return () => {
+      wsRef.current?.close()
+    }
+  }, [connect])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || loading) return
+    if (!input.trim() || loading || !connected) return
 
     const userMessage = input.trim()
     setInput('')
     setMessages(prev => [...prev, { role: 'user', content: userMessage }])
-    setLoading(true)
-
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage, name: 'Visitor' })
-      })
-
-      const data = await response.json()
-      
-      if (data.requestId && data.status === 'processing') {
-        const reply = await pollForResponse(data.requestId)
-        setMessages(prev => [...prev, { 
-          role: 'assistant', 
-          content: reply || "I received your message but the response timed out. Try Telegram @Jarvisv69_bot for instant chat! 🎩"
-        }])
-      } else if (data.reply) {
-        setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
-      }
-    } catch (error) {
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: "Connection error. Try Telegram @Jarvisv69_bot 🎩" 
-      }])
-    }
-
-    setLoading(false)
+    
+    wsRef.current?.send(JSON.stringify({ message: userMessage }))
   }
 
   return (
@@ -84,7 +88,9 @@ export default function Home() {
       <div className="header">
         <div className="emoji">🎩</div>
         <h1>Edwin Jarvis</h1>
-        <p>AI Assistant</p>
+        <p style={{ color: connected ? '#4ade80' : '#f87171' }}>
+          {connected ? '● Connected' : '○ Connecting...'}
+        </p>
       </div>
 
       <div className="chat-container">
@@ -109,15 +115,15 @@ export default function Home() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Type a message..."
-            disabled={loading}
+            placeholder={connected ? "Type a message..." : "Connecting..."}
+            disabled={loading || !connected}
           />
-          <button type="submit" disabled={loading || !input.trim()}>Send</button>
+          <button type="submit" disabled={loading || !input.trim() || !connected}>Send</button>
         </form>
       </div>
 
       <div className="status">
-        Also on <a href="https://t.me/Jarvisv69_bot" target="_blank">Telegram</a> • edwin@mail.andyou.ph
+        Real-time chat powered by WebSocket 🔌
       </div>
     </div>
   )
