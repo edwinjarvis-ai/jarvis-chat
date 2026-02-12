@@ -24,6 +24,7 @@ export default function Home() {
   const wsRef = useRef<WebSocket | null>(null)
   const pendingRef = useRef<Map<string, (payload: any) => void>>(new Map())
   const streamRef = useRef<string>('')
+  const connectNonceRef = useRef<string | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -47,6 +48,44 @@ export default function Home() {
     })
   }, [])
 
+  const sendConnect = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    
+    const instanceId = `wc-${Math.random().toString(36).slice(2)}-${Date.now()}`
+    const connectParams: any = {
+      minProtocol: 3,
+      maxProtocol: 3,
+      client: {
+        id: 'webchat',  // Use recognized client ID
+        version: '1.0.0',
+        platform: 'web',
+        mode: 'webchat',
+        instanceId
+      },
+      auth: GATEWAY_TOKEN ? { token: GATEWAY_TOKEN } : undefined
+    }
+    
+    // Only include nonce if we received one from challenge
+    if (connectNonceRef.current) {
+      connectParams.nonce = connectNonceRef.current
+    }
+    
+    const id = nextId()
+    pendingRef.current.set(id, (payload) => {
+      setConnected(true)
+      setStatus('Connected')
+      const name = payload?.assistant?.name || 'Jarvis'
+      setMessages([{ role: 'assistant', content: `Good evening! I'm ${name}, at your service. 🎩` }])
+    })
+    
+    wsRef.current.send(JSON.stringify({
+      type: 'req',
+      id,
+      method: 'connect',
+      params: connectParams
+    }))
+  }, [])
+
   const connect = useCallback(() => {
     if (!GATEWAY_URL) {
       setStatus('Gateway URL not configured')
@@ -55,6 +94,7 @@ export default function Home() {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
     
     setStatus('Connecting...')
+    connectNonceRef.current = null
     const ws = new WebSocket(GATEWAY_URL)
     
     ws.onopen = () => {
@@ -66,28 +106,10 @@ export default function Home() {
       try {
         const data = JSON.parse(event.data)
         
-        // Handle connect challenge
+        // Handle connect challenge - save nonce and send connect
         if (data.type === 'event' && data.event === 'connect.challenge') {
-          // Send connect request with auth
-          const connectReq = {
-            type: 'req',
-            id: nextId(),
-            method: 'connect',
-            params: {
-              minProtocol: 3,
-              maxProtocol: 3,
-              client: {
-                id: 'jarvis-webchat',
-                version: '1.0.0',
-                platform: 'web',
-                mode: 'webchat',
-                instanceId: `wc-${Date.now()}`
-              },
-              auth: GATEWAY_TOKEN ? { token: GATEWAY_TOKEN } : undefined,
-              nonce: data.payload?.nonce
-            }
-          }
-          ws.send(JSON.stringify(connectReq))
+          connectNonceRef.current = data.payload?.nonce || null
+          sendConnect()
           return
         }
         
@@ -98,14 +120,10 @@ export default function Home() {
             pendingRef.current.delete(data.id)
             if (data.ok) {
               resolver(data.payload)
+            } else {
+              console.error('Request failed:', data.error)
+              setStatus(`Error: ${data.error?.message || 'Unknown error'}`)
             }
-          }
-          // Check if this is connect response (has hello or assistant info)
-          if (data.ok && (data.payload?.hello || data.payload?.assistant)) {
-            setConnected(true)
-            setStatus('Connected')
-            const name = data.payload?.assistant?.name || 'Jarvis'
-            setMessages([{ role: 'assistant', content: `Good evening! I'm ${name}, at your service. 🎩` }])
           }
           return
         }
@@ -162,7 +180,7 @@ export default function Home() {
     }
     
     wsRef.current = ws
-  }, [loading])
+  }, [loading, sendConnect])
 
   useEffect(() => {
     connect()
