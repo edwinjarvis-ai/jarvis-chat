@@ -26,6 +26,30 @@ export default function Home() {
     scrollToBottom()
   }, [messages])
 
+  const pollForResponse = async (requestId: string, maxAttempts = 30): Promise<string | null> => {
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(resolve => setTimeout(resolve, 2000)) // Poll every 2 seconds
+      
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'status', requestId })
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          if (data.status === 'complete' && data.reply) {
+            return data.reply
+          }
+        }
+      } catch (e) {
+        console.error('Poll error:', e)
+      }
+    }
+    return null
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim() || loading) return
@@ -39,12 +63,27 @@ export default function Home() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage })
+        body: JSON.stringify({ message: userMessage, sessionId: 'web-visitor' })
       })
 
       if (response.ok) {
         const data = await response.json()
-        setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
+        
+        // If we got a requestId, poll for the response
+        if (data.requestId && data.status === 'processing') {
+          const reply = await pollForResponse(data.requestId)
+          if (reply) {
+            setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+          } else {
+            setMessages(prev => [...prev, { 
+              role: 'assistant', 
+              content: "I received your message but couldn't process it in time. Please try again or reach me via Telegram @Jarvisv69_bot 🎩" 
+            }])
+          }
+        } else if (data.reply) {
+          // Direct reply (demo mode)
+          setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
+        }
       } else {
         setMessages(prev => [...prev, { 
           role: 'assistant', 
