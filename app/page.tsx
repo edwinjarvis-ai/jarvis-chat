@@ -24,7 +24,6 @@ export default function Home() {
   const wsRef = useRef<WebSocket | null>(null)
   const pendingRef = useRef<Map<string, (payload: any) => void>>(new Map())
   const streamRef = useRef<string>('')
-  const connectNonceRef = useRef<string | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -64,11 +63,7 @@ export default function Home() {
       },
       auth: GATEWAY_TOKEN ? { token: GATEWAY_TOKEN } : undefined
     }
-    
-    // Only include nonce if we received one from challenge
-    if (connectNonceRef.current) {
-      connectParams.nonce = connectNonceRef.current
-    }
+    // Note: nonce is only used for device identity signing, not needed for basic auth
     
     const id = nextId()
     pendingRef.current.set(id, (payload) => {
@@ -94,7 +89,6 @@ export default function Home() {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
     
     setStatus('Connecting...')
-    connectNonceRef.current = null
     const ws = new WebSocket(GATEWAY_URL)
     
     ws.onopen = () => {
@@ -106,9 +100,8 @@ export default function Home() {
       try {
         const data = JSON.parse(event.data)
         
-        // Handle connect challenge - save nonce and send connect
+        // Handle connect challenge - send connect request
         if (data.type === 'event' && data.event === 'connect.challenge') {
-          connectNonceRef.current = data.payload?.nonce || null
           sendConnect()
           return
         }
