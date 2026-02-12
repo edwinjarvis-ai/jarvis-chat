@@ -45,6 +45,9 @@ export default function Home() {
         } else if (data.type === 'error') {
           setLoading(false)
           setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+        } else if (data.type === 'timeout') {
+          // Keep typing but show interim message
+          setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
         }
       } catch (e) {
         console.error('Parse error:', e)
