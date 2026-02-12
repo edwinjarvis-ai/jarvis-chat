@@ -7,7 +7,7 @@ interface Message {
   content: string
 }
 
-const WS_URL = 'wss://serving-keyboards-finally-importantly.trycloudflare.com'
+const WS_URL = 'wss://offered-tracker-western-affairs.trycloudflare.com'
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([])
