@@ -51,14 +51,12 @@ export async function POST(request: Request) {
         await redis.set(`chat:${requestId}`, 'pending', { ex: 300 })
 
         // Enhanced message with callback instructions
-        const CALLBACK_SECRET = process.env.CALLBACK_SECRET || 'jarvis-callback-2026'
         const enhancedMessage = `[WebChat ID:${requestId}] User says: "${message}"
 
-IMPORTANT: After you compose your reply, you MUST deliver it by running this curl command:
+After composing your reply, deliver it via this curl command:
+curl -X POST "${callbackUrl}" -H "Content-Type: application/json" -d '{"type":"callback","requestId":"${requestId}","response":"YOUR_REPLY_TEXT"}'
 
-curl -X POST "${callbackUrl}" -H "Content-Type: application/json" -d '{"type":"callback","requestId":"${requestId}","secret":"${CALLBACK_SECRET}","response":"YOUR_REPLY_HERE"}'
-
-Replace YOUR_REPLY_HERE with your actual response text (escape special characters like quotes). Execute this curl BEFORE ending your turn.`
+Replace YOUR_REPLY_TEXT with your actual response (escape quotes with backslash). Run the curl BEFORE your final reply.`
 
         const hookResponse = await fetch(`${OPENCLAW_TUNNEL_URL}/hooks/agent`, {
           method: 'POST',
