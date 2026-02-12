@@ -11,13 +11,8 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
     
-    // Handle callback from agent (with optional secret for auth bypass)
-    const CALLBACK_SECRET = process.env.CALLBACK_SECRET || 'jarvis-callback-2026'
+    // Handle callback from agent (for future use)
     if (body.type === 'callback' && body.requestId && body.response) {
-      // Verify callback secret if provided
-      if (body.secret && body.secret !== CALLBACK_SECRET) {
-        return NextResponse.json({ error: 'Invalid secret' }, { status: 401 })
-      }
       await redis.set(`chat:${body.requestId}`, body.response, { ex: 300 }) // 5 min TTL
       return NextResponse.json({ ok: true })
     }
@@ -25,7 +20,7 @@ export async function POST(request: Request) {
     // Handle status check (polling)
     if (body.type === 'status' && body.requestId) {
       const response = await redis.get<string>(`chat:${body.requestId}`)
-      if (response) {
+      if (response && response !== 'pending') {
         await redis.del(`chat:${body.requestId}`)
         return NextResponse.json({ reply: response, status: 'complete' })
       }
@@ -33,16 +28,14 @@ export async function POST(request: Request) {
     }
     
     // Handle new message
-    const { message, sessionId } = body
+    const { message, sessionId, name } = body
     
     if (!message) {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
     }
 
     const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const callbackUrl = process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}/api/chat`
-      : 'https://jarvis-chat-six.vercel.app/api/chat'
+    const visitorName = name || 'Anonymous visitor'
 
     // If tunnel is configured, send to real Jarvis
     if (OPENCLAW_TUNNEL_URL && OPENCLAW_HOOKS_TOKEN) {
@@ -50,35 +43,23 @@ export async function POST(request: Request) {
         // Mark request as pending in Redis
         await redis.set(`chat:${requestId}`, 'pending', { ex: 300 })
 
-        // Enhanced message with callback instructions
-        const enhancedMessage = `[WebChat ID:${requestId}] User says: "${message}"
-
-After composing your reply, deliver it via this curl command:
-curl -X POST "${callbackUrl}" -H "Content-Type: application/json" -d '{"type":"callback","requestId":"${requestId}","response":"YOUR_REPLY_TEXT"}'
-
-Replace YOUR_REPLY_TEXT with your actual response (escape quotes with backslash). Run the curl BEFORE your final reply.`
-
-        const hookResponse = await fetch(`${OPENCLAW_TUNNEL_URL}/hooks/agent`, {
+        // Send to main session via wake endpoint
+        const hookResponse = await fetch(`${OPENCLAW_TUNNEL_URL}/hooks/wake`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${OPENCLAW_HOOKS_TOKEN}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            message: enhancedMessage,
-            name: 'WebChat',
-            sessionKey: `webchat:${sessionId || 'visitor'}`,
-            wakeMode: 'now',
-            deliver: false,
-            timeoutSeconds: 60,
+            text: `📬 WebChat message from ${visitorName}:\n\n"${message}"\n\n(Contact form - visitor won't see your response directly)`,
+            mode: 'now',
           }),
         })
 
         if (hookResponse.ok) {
           return NextResponse.json({ 
-            requestId,
-            status: 'processing',
-            message: 'Processing your message...'
+            reply: `Thanks for your message! I've received it and will take a look. For real-time conversations, you can also reach me on Telegram @Jarvisv69_bot or email edwin@mail.andyou.ph 🎩`,
+            status: 'received'
           })
         }
       } catch (hookError) {
